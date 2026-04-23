@@ -59,6 +59,19 @@ tbody tr:hover td.pf{background:#bbf7d0;}
   <div class="status" id="status">Dane z tabeli &#8226; wgraj PDF aby uzupe&#322;ni&#263;</div>
 </div>
 <div class="log" id="log"></div>
+
+<!-- Date picker modal -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:1.5rem;min-width:300px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="font-size:15px;font-weight:700;margin-bottom:.4rem;">Wybierz dat&#281; odczytu</div>
+    <div style="font-size:12px;color:#6b6960;margin-bottom:1rem;">Kt&#243;re wskazania wpisa&#263; do tabeli?</div>
+    <div id="modal-dates" style="display:flex;flex-direction:column;gap:7px;margin-bottom:1.25rem;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="document.getElementById('modal').style.display='none'" style="padding:7px 14px;border:1px solid #dedad0;border-radius:5px;background:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Anuluj</button>
+      <button onclick="applyDate()" style="padding:7px 14px;border:none;border-radius:5px;background:#16a34a;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Wype&#322;nij &#8594;</button>
+    </div>
+  </div>
+</div>
 <div class="main" id="main"></div>
 
 <script>
@@ -88,47 +101,87 @@ async function processPdf(){
   document.getElementById('go-btn').disabled=true;
   document.getElementById('log').innerHTML='';
   setP(5);
-  L('Wczytuję PDF...','nf');
-
+  L('Wczytuę PDF...','nf');
   try{
-    // Extract all text items in stream order
     const buf=await pdfFile.arrayBuffer();
     const pdf=await pdfjsLib.getDocument({data:buf}).promise;
     const items=[];
     for(let p=1;p<=pdf.numPages;p++){
       const page=await pdf.getPage(p);
       const content=await page.getTextContent();
-      for(const item of content.items){
-        const t=item.str.trim();
-        if(t) items.push(t);
-      }
+      for(const item of content.items){const t=item.str.trim();if(t)items.push(t);}
     }
-    L('PDF: '+items.length+' element\u00f3w','ok');
+    L('PDF: '+items.length+' elementów','ok');
     setP(40);
-
-    // Parse
     pdfData=parsePdf(items);
     const count=Object.keys(pdfData).length;
-    if(!count){L('Nie znaleziono danych! Czy to plik PGE?','er');document.getElementById('go-btn').disabled=false;return;}
-    const dates=[...new Set(Object.values(pdfData).flatMap(d=>Object.keys(d)))].sort();
-    L('Znaleziono '+count+' licznik\u00f3w \u2022 daty: '+dates.join(', '),'ok');
-    setP(80);
-
-    // Merge PDF data into TABLE
-    mergePdfData(dates);
-    setP(100);
-    document.getElementById('status').textContent='Dane z PDF \u2022 '+dates.join(', ')+' \u2022 kom\u00f3rki zaznaczone na zielono';
-    render();
-    setTimeout(()=>{document.getElementById('log').style.display='none';setP(0);},3000);
-
-  }catch(e){L('B\u0141\u0104D: '+e.message,'er');console.error(e);}
+    if(!count){L('Nie znaleziono danych PGE!','er');document.getElementById('go-btn').disabled=false;return;}
+    const allDates=new Set();
+    for(const m of Object.values(pdfData)) for(const d of Object.keys(m)) allDates.add(d);
+    const sortedDates=[...allDates].sort(cmpDate);
+    L('Znaleziono '+count+' liczników • daty: '+sortedDates.join(', '),'ok');
+    setP(90);
+    showDatePicker(sortedDates);
+  }catch(e){L('BŁĄD: '+e.message,'er');console.error(e);}
   document.getElementById('go-btn').disabled=false;
+  setTimeout(()=>setP(0),500);
+}
+
+function cmpDate(a,b){
+  const p=s=>{if(s.includes('/')){const[d,m,y]=s.split('/');return new Date(y,m-1,d);}const[m,y]=s.split('.');return new Date(y,m-1,1);};
+  return p(a)-p(b);
+}
+
+function showDatePicker(dates){
+  const modal=document.getElementById('modal');
+  const container=document.getElementById('modal-dates');
+  container.innerHTML='';
+  dates.forEach((d,i)=>{
+    const label=document.createElement('label');
+    label.style.cssText='display:flex;align-items:center;gap:10px;padding:10px 14px;border:1.5px solid #dedad0;border-radius:7px;cursor:pointer;transition:border-color .15s;';
+    const radio=document.createElement('input');
+    radio.type='radio';radio.name='pick-date';radio.value=d;
+    radio.style.accentColor='#16a34a';radio.style.width='16px';radio.style.height='16px';
+    if(i===dates.length-1){radio.checked=true;label.style.borderColor='#16a34a';}
+    radio.addEventListener('change',()=>{
+      document.querySelectorAll('#modal-dates label').forEach(l=>l.style.borderColor='#dedad0');
+      label.style.borderColor='#16a34a';
+    });
+    const txt=document.createElement('span');
+    txt.style.cssText='font-size:14px;font-weight:700;';txt.textContent=d;
+    label.appendChild(radio);label.appendChild(txt);
+    container.appendChild(label);
+  });
+  modal.style.display='flex';
+}
+
+function applyDate(){
+  const sel=document.querySelector('input[name="pick-date"]:checked');
+  if(!sel)return;
+  const date=sel.value;
+  document.getElementById('modal').style.display='none';
+  // Merge data for selected date
+  TABLE=JSON.parse(JSON.stringify(BASE));
+  for(const bud of Object.keys(TABLE)){
+    for(const row of TABLE[bud].rows){
+      if(row.date===date){
+        row.isPdf=true;
+        for(const m of TABLE[bud].meters){
+          if(pdfData[m.meter]&&pdfData[m.meter][date]!=null)
+            row.data[m.meter]=pdfData[m.meter][date];
+        }
+      }
+    }
+  }
+  document.getElementById('status').textContent='Dane z PDF • '+date+' • komórki na zielono';
+  document.getElementById('log').style.display='none';
+  setP(0);
+  render();
 }
 
 function parsePdf(items){
   const results={};
 
-  // Find invoice blocks
   const starts=[];
   for(let i=0;i<items.length;i++){
     if(items[i].includes('FAKTURA VAT NR')) starts.push(i);
@@ -141,7 +194,7 @@ function parsePdf(items){
     const e=cleanStarts[k+1]||items.length;
     const block=items.slice(s,e);
 
-    // Find meter number
+    // Find meter
     let meter=null;
     for(const t of block){
       const m=t.match(/Licznik.{0,80}nr[\s\u00a0:]+(\d{7,12})/);
@@ -149,74 +202,43 @@ function parsePdf(items){
     }
     if(!meter) continue;
 
-    // Find billing end date
-    let endDate=null;
+    // Find reading dates (standalone dd/mm/yyyy items)
+    const allDates=[...new Set(block.filter(t=>/^\d{2}\/\d{2}\/\d{4}$/.test(t)))];
+    if(!allDates.length) continue;
+
+    // Collect big numbers (>100) — both decimals and integers
+    const bigVals=[];
     for(const t of block){
-      const m=t.replace(/\u00a0/g,' ').match(/do\s+(\d{2}\/\d{2}\/\d{4})/);
-      if(m){endDate=m[1];break;}
+      if(/^\d+[,.]\d+$/.test(t)){const v=parseFloat(t.replace(',','.'));if(v>100)bigVals.push(v);}
+      else if(/^\d+$/.test(t)){const v=parseInt(t);if(v>100)bigVals.push(v);}
     }
-    if(!endDate) continue;
+    const uniqueVals=[...new Map(bigVals.map(v=>[v,v])).values()];
+    if(!uniqueVals.length) continue;
 
-    // Has X (estimated) period?
     const hasX=block.some(t=>t==='(X)');
+    const readings={};
 
-    // Get all decimals > 100 in stream order
-    const bigVals=block
-      .filter(t=>/^\d+[,.]\d+$/.test(t))
-      .map(t=>parseFloat(t.replace(',','.')))
-      .filter(v=>v>100);
+    const fmtDate=raw=>{const[d,mo,y]=raw.split('/');return(d==='31'&&mo==='01')?raw:`${mo}.${y}`;};
 
-    if(!bigVals.length) continue;
-
-    // Get unique values in order of first appearance
-    const seen=[];
-    for(const v of bigVals){
-      if(!seen.includes(v)) seen.push(v);
+    if(hasX&&allDates.length>=2){
+      // 2-period: X date gets first unique val, Z date gets first val > X val
+      const xVal=uniqueVals[0];
+      const zVal=uniqueVals.find(v=>v>xVal)||null;
+      readings[fmtDate(allDates[0])]=xVal;
+      if(zVal) readings[fmtDate(allDates[1])]=zVal;
+    } else {
+      // Single period: first unique val = bieżące
+      readings[fmtDate(allDates[0])]=uniqueVals[0];
     }
 
-    // 1-period: first unique = Z bieżące
-    // 2-period: first unique = X bieżące, second = Z bieżące
-    const zVal=hasX&&seen.length>=2?seen[1]:seen[0];
-    const xVal=hasX&&seen.length>=2?seen[0]:null;
-
-    const[d,mo,y]=endDate.split('/');
-    const zDate=(d==='31'&&mo==='01')?endDate:`${mo}.${y}`;
-
-    if(!results[meter]) results[meter]={};
-    results[meter][zDate]=zVal;
-
-    if(xVal!==null){
-      let xDateRaw=null;
-      for(const t of block){
-        if(/^\d{2}\/\d{2}\/\d{4}$/.test(t)&&t!==endDate){xDateRaw=t;break;}
-      }
-      if(xDateRaw){
-        const[xd,xmo,xy]=xDateRaw.split('/');
-        const xDate=(xd==='31'&&xmo==='01')?xDateRaw:`${xmo}.${xy}`;
-        if(xDate!==zDate) results[meter][xDate]=xVal;
-      }
-    }
+    if(Object.keys(readings).length) results[meter]=readings;
   }
 
   console.log('Parsed:',Object.keys(results).length,'meters');
   return results;
 }
 
-function mergePdfData(pdfDates){
-  TABLE=JSON.parse(JSON.stringify(BASE));
-  for(const bud of Object.keys(TABLE)){
-    for(const row of TABLE[bud].rows){
-      if(pdfDates.includes(row.date)){
-        row.isPdf=true;
-        for(const m of TABLE[bud].meters){
-          if(pdfData[m.meter]&&pdfData[m.meter][row.date]!=null){
-            row.data[m.meter]=pdfData[m.meter][row.date];
-          }
-        }
-      }
-    }
-  }
-}
+
 
 function render(){
   const main=document.getElementById('main');
